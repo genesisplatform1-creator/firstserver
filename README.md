@@ -7,7 +7,7 @@ A comprehensive Model Context Protocol (MCP) server designed to maximize AI code
 - **16 Powerful Tools** across 4 categories
 - **ECS Architecture** - Entity Component System for composable state
 - **Durable Execution** - SQLite-backed event sourcing with replay support
-- **Mahfuz Integrity** - Full reasoning trace and immutable lineage tracking
+- **Immutable Audit Log** - Full reasoning trace and immutable lineage tracking (Merkle Tree backed)
 
 ## Installation
 
@@ -27,7 +27,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "trae-ai": {
       "command": "node",
-      "args": ["d:/code/mcpserver-01/dist/index.js"]
+      "args": ["/path/to/mcpserver-01/dist/index.js"]
     }
   }
 }
@@ -66,7 +66,7 @@ npm run inspector
 | `risk_assess` | Evaluate critical risks in code changes |
 | `compliance_check` | Check against coding standards |
 | `security_scan` | Scan for vulnerabilities |
-| `lineage_track` | Full reasoning trace (Mahfuz integrity) |
+| `lineage_track` | Full reasoning trace (Audit Log) |
 
 ### Productivity
 
@@ -108,6 +108,15 @@ The server now includes a `scripts/demo_grand_integration.ts` that demonstrates:
 5. **Succinct**: Logging the audit trail in a BitVector.
 
 Run it with: `npx tsx scripts/demo_grand_integration.ts`
+
+## Performance Benchmarks
+
+Recent stress tests (`scripts/stress_test_ultra.ts`) demonstrate:
+
+- **Throughput**: ~60-80 Requests Per Second (TPS) for lightweight tasks.
+- **Latency**: Sub-10ms for small matrix operations.
+- **Scalability**: Handles 500x500 matrix computations without crashing (via file offloading).
+- **Context Safety**: Large results (>10k elements) are automatically offloaded to files, reducing JSON payload from ~1.2MB to <500 bytes.
 
 ## Architecture
 

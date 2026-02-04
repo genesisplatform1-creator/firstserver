@@ -166,7 +166,7 @@ Use these tools:
         }
     );
 
-    // Mahfuz lineage prompt
+    // Audit Log lineage prompt
     server.prompt(
         'trace_lineage',
         'Create a full reasoning trace for governance and compliance',
@@ -188,7 +188,7 @@ ${decision}
 
 ${codeVersion ? `**Code Version:** ${codeVersion}\n` : ''}
 
-**Mahfuz Integrity Requirements:**
+**Audit Log Integrity Requirements:**
 1. Every state transition must be a committed event
 2. Link code version (Git hash), data version, and model version
 3. Document all reasoning steps with inputs and outputs

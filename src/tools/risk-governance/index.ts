@@ -313,196 +313,46 @@ export function registerRiskGovernanceTools(server: McpServer): void {
         }
     );
 
-    // lineage_track - Full reasoning trace (Mahfuz Integrity)
+    // lineage_track - Full reasoning trace (Audit Log)
     server.tool(
         'lineage_track',
-        'Track full reasoning trace for Mahfuz integrity. Links code, data, and model versions.',
+        'Retrieve the full immutable reasoning trace (Audit Log) for an entity.',
         {
-            action: z.enum(['create', 'step', 'fork', 'query']).describe('Action to perform'),
-            entityId: z.string().optional().describe('Entity ID for existing lineage'),
-            codeVersion: z.string().optional().describe('Git commit hash'),
-            modelVersion: z.string().optional().describe('Model/GGUF hash'),
-            stepAction: z.string().optional().describe('Action description for step'),
-            stepInput: z.unknown().optional().describe('Input for step'),
-            stepOutput: z.unknown().optional().describe('Output for step'),
+            entityId: z.string().describe('ID of the entity (task, artifact)'),
+            format: z.enum(['json', 'markdown']).default('markdown')
         },
-        async ({ action, entityId, codeVersion, modelVersion, stepAction, stepInput, stepOutput }) => {
+        async ({ entityId, format }) => {
             const store = getEventStore();
+            const events = store.loadEvents(entityId);
 
-            switch (action) {
-                case 'create': {
-                    const entity = createEntity(EntityType.EVENT);
-                    const newEntityId = serializeEntity(entity);
-
-                    const lineage: LineageComponent = {
-                        entityId: newEntityId,
-                        codeVersion: codeVersion ?? 'unknown',
-                        dataVersion: computeDataVersion({ timestamp: Date.now() }),
-                        modelVersion,
-                        reasoningTrace: [],
-                        createdAt: Date.now(),
-                    };
-
-                    LineageComponentSchema.parse(lineage);
-                    store.append(newEntityId, 'lineage.created', lineage);
-
-                    return {
-                        content: [
-                            {
-                                type: 'text' as const,
-                                text: JSON.stringify({
-                                    success: true,
-                                    entityId: newEntityId,
-                                    lineage: {
-                                        codeVersion: lineage.codeVersion,
-                                        dataVersion: lineage.dataVersion,
-                                        modelVersion: lineage.modelVersion,
-                                        stepCount: 0,
-                                    },
-                                }, null, 2),
-                            },
-                        ],
-                    };
-                }
-
-                case 'step': {
-                    if (!entityId) {
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'entityId required' }) }],
-                            isError: true,
-                        };
-                    }
-
-                    const events = store.loadEvents(entityId);
-                    const createEvent = events.find(e => e.type === 'lineage.created');
-                    if (!createEvent) {
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'Lineage not found' }) }],
-                            isError: true,
-                        };
-                    }
-
-                    let lineage = createEvent.payload as LineageComponent;
-                    for (const event of events) {
-                        if (event.type === 'lineage.step_added') {
-                            const step = event.payload as LineageComponent['reasoningTrace'][0];
-                            lineage = { ...lineage, reasoningTrace: [...lineage.reasoningTrace, step] };
-                        }
-                    }
-
-                    lineage = addReasoningStep(lineage, stepAction ?? 'unknown', stepInput, stepOutput);
-                    const newStep = lineage.reasoningTrace[lineage.reasoningTrace.length - 1];
-
-                    store.append(entityId, 'lineage.step_added', newStep);
-
-                    return {
-                        content: [
-                            {
-                                type: 'text' as const,
-                                text: JSON.stringify({
-                                    success: true,
-                                    entityId,
-                                    step: newStep,
-                                    totalSteps: lineage.reasoningTrace.length,
-                                }, null, 2),
-                            },
-                        ],
-                    };
-                }
-
-                case 'fork': {
-                    if (!entityId) {
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'entityId required' }) }],
-                            isError: true,
-                        };
-                    }
-
-                    const events = store.loadEvents(entityId);
-                    const createEvent = events.find(e => e.type === 'lineage.created');
-                    if (!createEvent) {
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'Lineage not found' }) }],
-                            isError: true,
-                        };
-                    }
-
-                    const parentLineage = createEvent.payload as LineageComponent;
-                    const childEntity = createEntity(EntityType.EVENT);
-                    const childId = serializeEntity(childEntity);
-
-                    const forkedLineage = forkLineage(parentLineage, childId);
-
-                    LineageComponentSchema.parse(forkedLineage);
-                    store.append(childId, 'lineage.created', forkedLineage);
-                    store.append(entityId, 'lineage.forked', { childId });
-
-                    return {
-                        content: [
-                            {
-                                type: 'text' as const,
-                                text: JSON.stringify({
-                                    success: true,
-                                    parentId: entityId,
-                                    childId,
-                                    lineage: {
-                                        parentLineage: forkedLineage.parentLineage,
-                                        codeVersion: forkedLineage.codeVersion,
-                                        dataVersion: forkedLineage.dataVersion,
-                                    },
-                                }, null, 2),
-                            },
-                        ],
-                    };
-                }
-
-                case 'query': {
-                    if (!entityId) {
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'entityId required' }) }],
-                            isError: true,
-                        };
-                    }
-
-                    const events = store.loadEvents(entityId);
-                    const createEvent = events.find(e => e.type === 'lineage.created');
-                    if (!createEvent) {
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'Lineage not found' }) }],
-                            isError: true,
-                        };
-                    }
-
-                    let lineage = createEvent.payload as LineageComponent;
-                    for (const event of events) {
-                        if (event.type === 'lineage.step_added') {
-                            const step = event.payload as LineageComponent['reasoningTrace'][0];
-                            lineage = { ...lineage, reasoningTrace: [...lineage.reasoningTrace, step] };
-                        }
-                    }
-
-                    return {
-                        content: [
-                            {
-                                type: 'text' as const,
-                                text: JSON.stringify({
-                                    success: true,
-                                    entityId,
-                                    lineage: {
-                                        codeVersion: lineage.codeVersion,
-                                        dataVersion: lineage.dataVersion,
-                                        modelVersion: lineage.modelVersion,
-                                        parentLineage: lineage.parentLineage,
-                                        stepCount: lineage.reasoningTrace.length,
-                                        steps: lineage.reasoningTrace,
-                                        createdAt: new Date(lineage.createdAt).toISOString(),
-                                    },
-                                }, null, 2),
-                            },
-                        ],
-                    };
-                }
+            if (events.length === 0) {
+                return {
+                    content: [{ type: 'text' as const, text: `No lineage found for entity ${entityId}` }]
+                };
             }
+
+            if (format === 'json') {
+                return {
+                    content: [{ type: 'text' as const, text: JSON.stringify(events, null, 2) }]
+                };
+            }
+
+            // Format as markdown
+            const lines = [
+                `# Audit Log Lineage: ${entityId}`,
+                `**Total Events:** ${events.length}`,
+                `**Last Updated:** ${new Date(events[events.length - 1]!.timestamp).toISOString()}`,
+                '',
+                '## Trace',
+                ...events.map(e => {
+                    const date = new Date(e.timestamp).toISOString();
+                    return `- **[${date}]** \`${e.type}\` (v${e.version})\n  - Payload: \`${JSON.stringify(e.payload).slice(0, 100)}...\``;
+                })
+            ];
+
+            return {
+                content: [{ type: 'text' as const, text: lines.join('\n') }]
+            };
         }
     );
 }

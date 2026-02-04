@@ -8,7 +8,7 @@
  * - 16 powerful tools across 4 categories
  * - ECS architecture for composable state  
  * - Durable execution with SQLite event sourcing
- * - Mahfuz integrity for full reasoning traces
+ * - Immutable Audit Log for full reasoning traces
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -247,7 +247,7 @@ async function main(): Promise<void> {
     registerPrompts(server);
 
     // Startup Integrity Check
-    console.error('Verifying Mahfuz Integrity...');
+    console.error('Verifying Audit Log Integrity...');
     try {
         const integrity = getEventStore().verifyIntegrity();
         if (integrity.valid) {

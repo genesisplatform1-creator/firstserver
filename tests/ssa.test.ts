@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { computeDominators, computeDominanceFrontiers, CFG } from '../src/tools/compiler/cfa/index';
+import { computeDominators, computeDominanceFrontiers, CFG } from '../src/analysis/cfa.js';
 
 describe('Static Analysis (SSA)', () => {
 

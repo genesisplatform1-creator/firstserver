@@ -1,6 +1,6 @@
 /**
  * Event Store - SQLite-backed event sourcing for durable execution
- * Implements append-only log with state reconstruction (Mahfuz Integrity)
+ * Implements append-only log with state reconstruction (Immutable Audit Log)
  */
 
 import Database from 'better-sqlite3';
@@ -401,7 +401,7 @@ export class EventStore {
         this.db.prepare('DELETE FROM saga_state WHERE saga_id = ?').run(sagaId);
     }
 
-    // ============ Mahfuz Integrity Methods ============
+    // ============ Audit Log Integrity Methods ============
 
     /**
      * Seal a new integrity block (Merkle Tree of recent events)
