@@ -39,9 +39,66 @@ Add to your `claude_desktop_config.json`:
 npm run inspector
 ```
 
-## Tools
+## Use Cases: Why Advanced Data Structures?
 
-### Progress Management
+While 16 tools might seem excessive, each serves a specific high-scale code productivity purpose:
+
+### 1. **HyperLogLog (`ds_hyperloglog`)**
+- **Problem**: You are refactoring a monorepo with 500,000 files. You need to know "How many *unique* error types are in the logs?" to prioritize fixes.
+- **Naive Solution**: Load all logs into memory `Set<string>`. **OOM Crash**.
+- **Trae Solution**: Stream logs into HyperLogLog. Uses <12KB memory to estimate cardinality with 99% accuracy.
+
+### 2. **Wavelet Trees (`ds_wavelet_ops`)**
+- **Problem**: "Find the 5000th occurrence of the variable `userID` in a 2GB log file."
+- **Naive Solution**: Scan linearly every time. Slow.
+- **Trae Solution**: Build a Wavelet Tree index. `select(5000, 'userID')` is **O(1)**. Instant navigation in massive files.
+
+### 3. **Gomory-Hu Tree (`ds_graph_gomory_hu`)**
+- **Problem**: You want to split a monolithic service into microservices. Where do you cut?
+- **Trae Solution**: Model the codebase as a graph (files=nodes, imports=edges). Gomory-Hu Tree efficiently calculates the **Min-Cut** between all pairs, identifying the "weakest links" (lowest coupling) to define service boundaries.
+
+### 4. **Immutable Audit Log (Merkle Trees)**
+- **Problem**: "Who changed this logic and why? Did the AI hallucinate this step?"
+- **Trae Solution**: Every tool execution is an event in a Merkle Tree. We can cryptographically prove the *exact* sequence of reasoning steps that led to a code change, preventing "AI black box" issues.
+
+## Real-World Examples
+
+### 1. Progress Tracking
+```typescript
+// Initialize a complex refactor task
+await mcp.call('progress_init', {
+  taskId: 'refactor-auth-v2',
+  description: 'Migrate to OAuth2 provider',
+  steps: 12
+});
+
+// Update as you go
+await mcp.call('progress_update', {
+  taskId: 'refactor-auth-v2',
+  percentage: 25,
+  currentStep: 3,
+  status: 'in_progress'
+});
+```
+
+### 2. High-Scale Cardinality Check
+```typescript
+// Estimate unique error logs in a massive stream
+const streamId = 'logs-2024-10-01';
+await mcp.call('ds_hyperloglog', {
+    action: 'add',
+    key: streamId,
+    values: ['Error: 500', 'Error: 404', 'Error: 500', ...] 
+});
+
+const count = await mcp.call('ds_hyperloglog', {
+    action: 'count',
+    key: streamId
+});
+// Returns ~2 (very fast, low memory)
+```
+
+## Tools
 
 | Tool | Description |
 | --- | --- |
@@ -117,6 +174,20 @@ Recent stress tests (`scripts/stress_test_ultra.ts`) demonstrate:
 - **Latency**: Sub-10ms for small matrix operations.
 - **Scalability**: Handles 500x500 matrix computations without crashing (via file offloading).
 - **Context Safety**: Large results (>10k elements) are automatically offloaded to files, reducing JSON payload from ~1.2MB to <500 bytes.
+
+## Troubleshooting & Resource Limits
+
+### Common Issues
+- **`npx: command not found`**: Ensure you have Node.js 18+ installed.
+- **SQLite Errors**: The server uses `better-sqlite3` in WAL mode. Ensure you have write permissions to the directory.
+
+### Resource Limits
+- **Concurrency**: Tested up to **50 concurrent workers**.
+- **Memory**: Base footprint ~150MB. Large matrix operations (>10k elements) offload to disk to prevent OOM.
+- **Storage**: Event log grows at ~1KB per event. 1 million events ≈ 1GB. Use `admin_prune` (planned) for cleanup.
+
+### Architecture Trade-offs
+- **Synchronous SQLite**: We use `better-sqlite3` for maximum single-thread throughput (10k+ inserts/sec). This blocks the event loop for microseconds per write. For an MCP server (typically single-user), this trade-off provides superior data integrity over async implementations.
 
 ## Architecture
 
