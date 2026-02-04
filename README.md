@@ -189,6 +189,27 @@ Recent stress tests (`scripts/stress_test_ultra.ts`) demonstrate:
 ### Architecture Trade-offs
 - **Synchronous SQLite**: We use `better-sqlite3` for maximum single-thread throughput (10k+ inserts/sec). This blocks the event loop for microseconds per write. For an MCP server (typically single-user), this trade-off provides superior data integrity over async implementations.
 
+## Error Handling & Recovery
+
+We design for failure. Here is how the server handles common edge cases:
+
+```typescript
+// Example: SQLite constraint violation (e.g., duplicate event ID)
+try {
+  eventStore.append(event);
+} catch (error) {
+  if (error.code === 'SQLITE_CONSTRAINT') {
+    console.error('Integrity violation: Event already exists');
+    // Recovery: Retry with new ID or return existing idempotent result
+  } else if (error.code === 'SQLITE_FULL') {
+    console.error('Disk full - switching to read-only mode');
+  }
+}
+```
+
+- **Worker Crashes**: If a worker process (e.g., `code-analysis-worker`) crashes (OOM or segfault), the `WorkerPool` automatically restarts it and retries the task up to 3 times.
+- **Context Overflow**: Large results are offloaded to disk (`file://...` references) instead of crashing the JSON-RPC connection.
+
 ## Architecture
 
 ```text
