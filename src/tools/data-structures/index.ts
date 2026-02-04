@@ -2,6 +2,8 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createHash } from 'node:crypto';
+import * as fs from 'fs';
+import * as readline from 'readline';
 import { BitVector, WaveletTree } from './succinct.js';
 import { buildGomoryHuTree } from './graph.js';
 import { PowerSetLattice, computeFixpoint } from './algebra.js';
@@ -148,48 +150,61 @@ export class BloomFilter {
 // 3. HyperLogLog (Cardinality)
 // ============================================================================
 
-export function hyperLogLog(items: string[]): number {
-    const b = 10; // 2^10 buckets
-    const m = 1 << b;
-    const registers = new Array(m).fill(0);
+export class HyperLogLog {
+    private b: number;
+    private m: number;
+    private registers: number[];
 
-    for (const item of items) {
+    constructor(b: number = 12) { // 2^12 = 4096 registers, standard for reasonable error
+        this.b = b;
+        this.m = 1 << b;
+        this.registers = new Array(this.m).fill(0);
+    }
+
+    add(item: string): void {
         const hash = createHash('sha256').update(item).digest(); // Buffer
-        // Bucket index from first b bits?
-        // Let's treat hash as integer
         // Use first 32 bits
         const val = hash.readUInt32BE(0);
-        const j = val >>> (32 - b);
-        const w = (val << b) >>> 0; // Remaining bits
+        const j = val >>> (32 - this.b);
+        const w = (val << this.b) >>> 0; // Remaining bits
 
         // Count leading zeros
         let rho = 1;
         if (w !== 0) {
-            rho = 1 + Math.clz32(w); // simplified
+            rho = 1 + Math.clz32(w);
         }
-        registers[j] = Math.max(registers[j]!, rho);
+        this.registers[j] = Math.max(this.registers[j]!, rho);
     }
 
-    // Harmonic mean
-    let sum = 0;
-    for (let r of registers) sum += Math.pow(2, -r);
-    const alphaMM = 0.7213 / (1 + 1.079 / m) * m * m; // Approx for m >= 128
-    const E_raw = alphaMM / sum;
-    let E = E_raw;
+    count(): number {
+        // Harmonic mean
+        let sum = 0;
+        for (let r of this.registers) sum += Math.pow(2, -r);
+        
+        const m = this.m;
+        const alphaMM = 0.7213 / (1 + 1.079 / m) * m * m; // Approx for m >= 128
+        const E_raw = alphaMM / sum;
+        let E = E_raw;
 
-    // Linear Counting (Small Range Correction)
-    if (E <= 2.5 * m) {
-        let V = 0;
-        for (const r of registers) {
-            if (r === 0) V++;
+        // Linear Counting (Small Range Correction)
+        if (E <= 2.5 * m) {
+            let V = 0;
+            for (const r of this.registers) {
+                if (r === 0) V++;
+            }
+            if (V > 0) {
+                E = m * Math.log(m / V);
+            }
         }
-        if (V > 0) {
-            E = m * Math.log(m / V);
-        }
+        
+        return Math.floor(E);
     }
-    // Large Range Correction (optional for 32-bit but good practice, though omitted for simplicity as 32-bit hash is the limit here)
+}
 
-    return Math.floor(E);
+export function hyperLogLog(items: string[]): number {
+    const hll = new HyperLogLog();
+    for (const item of items) hll.add(item);
+    return hll.count();
 }
 
 
@@ -250,17 +265,51 @@ export function registerDataStructureTools(server: McpServer): void {
 
     server.tool(
         'ds_hyperloglog',
-        'Estimate cardinality of large dataset.',
-        { items: z.array(z.string().max(1024)).max(1000000) }, // Max 1M items
-        async ({ items }) => {
-            const estimate = hyperLogLog(items);
+        'Estimate cardinality of large dataset. Supports inline items or file streaming.',
+        { 
+            items: z.array(z.string().max(1024)).max(1000000).optional(),
+            filePath: z.string().optional()
+        }, 
+        async ({ items, filePath }) => {
+            const hll = new HyperLogLog();
+            let countFromItems = 0;
+            let countFromFile = 0;
+
+            if (items) {
+                items.forEach(i => hll.add(i));
+                countFromItems = items.length;
+            }
+
+            if (filePath) {
+                if (!fs.existsSync(filePath)) {
+                    return { content: [{ type: 'text', text: JSON.stringify({ error: 'File not found' }) }], isError: true };
+                }
+                const fileStream = fs.createReadStream(filePath);
+                const rl = readline.createInterface({
+                    input: fileStream,
+                    crlfDelay: Infinity
+                });
+
+                for await (const line of rl) {
+                    hll.add(line);
+                    countFromFile++;
+                }
+            }
+
+            if (!items && !filePath) {
+                 return { content: [{ type: 'text', text: JSON.stringify({ error: 'Either items or filePath must be provided' }) }], isError: true };
+            }
+
+            const estimate = hll.count();
             return {
                 content: [{
                     type: 'text',
                     text: JSON.stringify({
-                        actual: new Set(items).size, // For verification/debug only on small sets
                         estimated: estimate,
-                        error: Math.abs(new Set(items).size - estimate) / new Set(items).size
+                        source: {
+                            itemsProcessed: countFromItems,
+                            linesProcessed: countFromFile
+                        }
                     }, null, 2)
                 }]
             };

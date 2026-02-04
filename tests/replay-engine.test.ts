@@ -16,10 +16,12 @@ describe('Replay Engine', () => {
     });
 
     describe('Replay Mode', () => {
-        it('should start replay with existing events', () => {
+        it('should start replay with existing events', async () => {
             const store = getEventStore();
             store.append('e1', 'created', { v: 1 });
             store.append('e1', 'updated', { v: 2 });
+
+            await store.flushBuffer();
 
             const state = engine.startReplay('e1');
 
@@ -28,11 +30,13 @@ describe('Replay Engine', () => {
             expect(state.position).toBe(0);
         });
 
-        it('should iterate through events in order', () => {
+        it('should iterate through events in order', async () => {
             const store = getEventStore();
             store.append('e1', 'first', {});
             store.append('e1', 'second', {});
             store.append('e1', 'third', {});
+
+            await store.flushBuffer();
 
             engine.startReplay('e1');
 
@@ -42,9 +46,11 @@ describe('Replay Engine', () => {
             expect(engine.nextEvent('e1')).toBeUndefined();
         });
 
-        it('should end replay mode', () => {
+        it('should end replay mode', async () => {
             const store = getEventStore();
             store.append('e1', 'event', {});
+
+            await store.flushBuffer();
 
             engine.startReplay('e1');
             expect(engine.isReplaying('e1')).toBe(true);
@@ -53,10 +59,12 @@ describe('Replay Engine', () => {
             expect(engine.isReplaying('e1')).toBe(false);
         });
 
-        it('should report correct replay position', () => {
+        it('should report correct replay position', async () => {
             const store = getEventStore();
             store.append('e1', 'a', {});
             store.append('e1', 'b', {});
+
+            await store.flushBuffer();
 
             engine.startReplay('e1');
             expect(engine.getPosition('e1')).toBe(0);
@@ -70,9 +78,11 @@ describe('Replay Engine', () => {
     });
 
     describe('Deterministic Time', () => {
-        it('should return event timestamp during replay', () => {
+        it('should return event timestamp during replay', async () => {
             const store = getEventStore();
             store.append('e1', 'event', {});
+
+            await store.flushBuffer();
 
             engine.startReplay('e1');
             const events = store.loadEvents('e1');
@@ -93,10 +103,12 @@ describe('Replay Engine', () => {
     });
 
     describe('Deterministic Random', () => {
-        it('should return consistent values for same seed', () => {
+        it('should return consistent values for same seed', async () => {
             // Start replay mode so random is deterministic
             const store = getEventStore();
             store.append('e1', 'test', {});
+            await store.flushBuffer();
+            
             engine.startReplay('e1');
 
             const rand1 = engine.random('e1', 123);
@@ -109,10 +121,11 @@ describe('Replay Engine', () => {
     });
 
     describe('Checkpoint/Restore', () => {
-        it('should checkpoint and restore state', () => {
+        it('should checkpoint and restore state', async () => {
             // First create an event so checkpoint has a version
             const store = getEventStore();
             store.append('e1', 'init', {});
+            await store.flushBuffer();
 
             const state = { counter: 42, items: ['a', 'b'] };
 

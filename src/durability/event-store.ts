@@ -61,8 +61,19 @@ export class EventStore {
     private getEventsAfterVersion: Database.Statement;
     private getLatestSnapshot: Database.Statement;
 
+    private writeBuffer: Event[] = [];
+    private flushTimer: NodeJS.Timeout | null = null;
+
     constructor(dbPath: string = ':memory:') {
         this.db = new Database(dbPath);
+        
+        // Performance optimizations for local write-heavy workloads
+        this.db.pragma('journal_mode = WAL');
+        this.db.pragma('synchronous = NORMAL'); // 2x speedup over FULL
+        this.db.pragma('cache_size = -64000'); // 64MB cache
+        this.db.pragma('temp_store = MEMORY');
+        this.db.pragma('mmap_size = 30000000000'); // 30GB mmap
+
         this.initializeSchema();
 
         // Prepare statements for performance
@@ -151,30 +162,76 @@ export class EventStore {
     `);
     }
 
+    public async flushBuffer(): Promise<void> {
+        this.flush();
+        // Wait for next tick to ensure any async operations (if any) complete?
+        // Flush is synchronous (using transaction), but wrapped in try-catch.
+        return Promise.resolve();
+    }
+
+    private flush(): void {
+        if (this.writeBuffer.length === 0) return;
+
+        const insert = this.insertEvent;
+        const eventsToFlush = [...this.writeBuffer];
+        this.writeBuffer = [];
+
+        try {
+            const transaction = this.db.transaction((events: Event[]) => {
+                for (const event of events) {
+                    insert.run(
+                        event.id,
+                        event.entityId,
+                        event.type,
+                        JSON.stringify(event.payload),
+                        event.timestamp,
+                        event.version
+                    );
+                }
+            });
+            transaction(eventsToFlush);
+        } catch (error) {
+            console.error('Failed to flush events:', error);
+        }
+
+        if (this.flushTimer) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = null;
+        }
+    }
+
     /**
-     * Append a new event to the log
+     * Append a new event to the log (Buffered)
      */
     append(entityId: string, type: string, payload: unknown, timestamp?: number): Event {
-        const currentVersion = this.getCurrentVersion(entityId);
+        // We need to calculate the version carefully.
+        // getCurrentVersion hits the DB, which might be behind the buffer.
+        // We add the count of buffered events for this entity.
+        const dbVersion = this.getCurrentVersion(entityId);
+        const bufferedCount = this.getBufferedCount(entityId);
+        
         const event: Event = {
             id: uuidv7(),
             entityId,
             type,
             payload,
             timestamp: timestamp ?? Date.now(),
-            version: currentVersion + 1,
+            version: dbVersion + bufferedCount + 1,
         };
 
-        this.insertEvent.run(
-            event.id,
-            event.entityId,
-            event.type,
-            JSON.stringify(event.payload),
-            event.timestamp,
-            event.version
-        );
+        this.writeBuffer.push(event);
+
+        if (this.writeBuffer.length >= 100) {
+            this.flush();
+        } else if (!this.flushTimer) {
+            this.flushTimer = setTimeout(() => this.flush(), 50);
+        }
 
         return event;
+    }
+
+    private getBufferedCount(entityId: string): number {
+        return this.writeBuffer.filter(e => e.entityId === entityId).length;
     }
 
     /**

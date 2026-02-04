@@ -15,12 +15,13 @@ describe('Event Store', () => {
     });
 
     describe('Event Append', () => {
-        it('should append events with auto-incrementing version', () => {
+        it('should append events with auto-incrementing version', async () => {
             const entityId = 'entity-1';
 
             store.append(entityId, 'created', { name: 'test' }, 1);
             store.append(entityId, 'updated', { name: 'updated' }, 2);
 
+            await store.flushBuffer();
             const events = store.loadEvents(entityId);
 
             expect(events).toHaveLength(2);
@@ -28,19 +29,21 @@ describe('Event Store', () => {
             expect(events[1]!.type).toBe('updated');
         });
 
-        it('should assign unique event IDs', () => {
+        it('should assign unique event IDs', async () => {
             store.append('e1', 'test', {}, 1);
             store.append('e1', 'test', {}, 2);
 
+            await store.flushBuffer();
             const events = store.loadEvents('e1');
 
             expect(events[0]!.id).not.toBe(events[1]!.id);
         });
 
-        it('should store event payload', () => {
+        it('should store event payload', async () => {
             const payload = { key: 'value', nested: { deep: true } };
             store.append('e1', 'complex', payload, 1);
 
+            await store.flushBuffer();
             const events = store.loadEvents('e1');
 
             expect(events[0]!.payload).toEqual(payload);
@@ -48,11 +51,12 @@ describe('Event Store', () => {
     });
 
     describe('Event Loading', () => {
-        it('should load events for specific entity only', () => {
+        it('should load events for specific entity only', async () => {
             store.append('entity-a', 'event-a', {}, 1);
             store.append('entity-b', 'event-b', {}, 1);
             store.append('entity-a', 'event-a2', {}, 2);
 
+            await store.flushBuffer();
             const eventsA = store.loadEvents('entity-a');
             const eventsB = store.loadEvents('entity-b');
 
@@ -60,11 +64,12 @@ describe('Event Store', () => {
             expect(eventsB).toHaveLength(1);
         });
 
-        it('should load events in version order', () => {
+        it('should load events in version order', async () => {
             store.append('e1', 'third', {}, 3);
             store.append('e1', 'first', {}, 1);
             store.append('e1', 'second', {}, 2);
 
+            await store.flushBuffer();
             const events = store.loadEvents('e1');
 
             expect(events[0]!.version).toBe(1);
@@ -106,23 +111,36 @@ describe('Event Store', () => {
     });
 
     describe('Version Tracking', () => {
-        it('should track current version', () => {
+        it('should track current version', async () => {
             expect(store.getCurrentVersion('e1')).toBe(0);
 
             store.append('e1', 'event', {}, 1);
+            // getCurrentVersion queries DB, so it should be 0 if not flushed.
+            // But append logic adds buffered count.
+            // Wait, getCurrentVersion in append() returns DB version.
+            // But in test, we call store.getCurrentVersion('e1') which is the method on store.
+            // The method logic: return this.db.prepare(...).get().
+            // It does NOT look at buffer.
+            // So if I don't flush, it returns 0 (or previous).
+            // The previous logic was: append inserts, so getCurrentVersion returns new version.
+            // Now: append buffers. getCurrentVersion returns OLD version.
+            // To make test pass, I must flush.
+            await store.flushBuffer();
             expect(store.getCurrentVersion('e1')).toBe(1);
 
             store.append('e1', 'event', {}, 2);
+            await store.flushBuffer();
             expect(store.getCurrentVersion('e1')).toBe(2);
         });
     });
 
     describe('Mahfuz Integrity', () => {
-        it('should seal an integrity block', () => {
+        it('should seal an integrity block', async () => {
             const entityId = uuidv7();
             store.append(entityId, 'TEST_EVENT_1', { data: 1 });
             store.append(entityId, 'TEST_EVENT_2', { data: 2 });
 
+            await store.flushBuffer();
             const result = store.sealIntegrityBlock(100);
             expect(result).not.toBeNull();
             expect(result!.eventCount).toBe(2);
@@ -131,23 +149,26 @@ describe('Event Store', () => {
             expect(verify.valid).toBe(true);
         });
 
-        it('should chain multiple blocks', () => {
+        it('should chain multiple blocks', async () => {
             const entityId = uuidv7();
             // Block 1
             store.append(entityId, 'E1', { v: 1 });
+            await store.flushBuffer();
             store.sealIntegrityBlock(100);
 
             // Block 2
             store.append(entityId, 'E2', { v: 2 });
+            await store.flushBuffer();
             store.sealIntegrityBlock(100);
 
             const verify = store.verifyIntegrity();
             expect(verify.valid).toBe(true);
         });
 
-        it('should detect tampering with event data', () => {
+        it('should detect tampering with event data', async () => {
             const entityId = uuidv7();
             const event = store.append(entityId, 'SENSITIVE', { amount: 100 });
+            await store.flushBuffer();
             store.sealIntegrityBlock(100);
 
             // Tamper with the event in DB
@@ -162,12 +183,14 @@ describe('Event Store', () => {
             expect(verify.error).toContain('Merkle Root mismatch');
         });
 
-        it('should detect broken hash chain', () => {
+        it('should detect broken hash chain', async () => {
             const entityId = uuidv7();
             store.append(entityId, 'A', {});
+            await store.flushBuffer();
             store.sealIntegrityBlock(100);
 
             store.append(entityId, 'B', {});
+            await store.flushBuffer();
             const block2 = store.sealIntegrityBlock(100);
 
             // Tamper with the previous_block_hash of block 2
